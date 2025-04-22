@@ -1,3 +1,5 @@
+// index.js
+
 require('dotenv').config();
 const { Telegraf, Scenes, session } = require('telegraf');
 const fetch = require('node-fetch');
@@ -34,7 +36,7 @@ async function getTracks()  { return fetchJson({ action: 'tracks'  }); }
 bot.command('leaderboard', async ctx => {
   try {
     const data = await fetchJson({ action: 'leaderboard' });
-    const rows = data.slice(1).sort((a,b)=>Number(a[1])-Number(b[1]));
+    const rows = data.slice(1).sort((a,b) => Number(a[1]) - Number(b[1]));
     let msg = '🏆 *Leaderboard* 🏆\n\n';
     rows.forEach(r => {
       msg += `• ${r[0]} — ${r[1]} pts (races: ${r[2]}, avg pos: ${r[3]})\n`;
@@ -45,12 +47,14 @@ bot.command('leaderboard', async ctx => {
   }
 });
 
-// Wizard for /newrace (today auto)
+// Wizard for /newrace (uses today’s date automatically)
 const NewRaceWizard = new Scenes.WizardScene(
   'newrace-wizard',
+
+  // Step 1: set date, load players & tracks, ask track
   async ctx => {
     ctx.session.newRace = {};
-    // set today's date in YYYY-MM-DD
+    // today in YYYY-MM-DD (SV locale)
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
     ctx.session.newRace.date = new Date().toLocaleDateString('sv', { timeZone: tz });
     try {
@@ -68,6 +72,8 @@ const NewRaceWizard = new Scenes.WizardScene(
     });
     return ctx.wizard.next();
   },
+
+  // Step 2: save track, ask first player position
   async ctx => {
     ctx.session.newRace.track = ctx.message.text.trim();
     ctx.session.newRace.positions = [];
@@ -78,6 +84,8 @@ const NewRaceWizard = new Scenes.WizardScene(
     );
     return ctx.wizard.next();
   },
+
+  // Step 3: collect all positions, send to WebApp
   async ctx => {
     const pos = Number(ctx.message.text.trim());
     ctx.session.newRace.positions.push(pos);
@@ -88,19 +96,19 @@ const NewRaceWizard = new Scenes.WizardScene(
         { parse_mode: 'Markdown' }
       );
     }
-    // submit
+    // Submit payload
     const { date, track, positions } = ctx.session.newRace;
     const players = ctx.session.players;
     const payload = { secret: WEBAPP_SECRET, date, track, players, positions };
     try {
       const res = await fetch(WEBAPP_URL, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body:    JSON.stringify(payload)
       });
-      const txt = await res.text();
-      if (txt !== 'ok') throw new Error(txt);
-      await ctx.reply('✅ New race saved for ' + date + ' on ' + track + '!');
+      const text = await res.text();
+      if (text !== 'ok') throw new Error(text);
+      await ctx.reply(`✅ New race saved for ${date} on ${track}!`);
     } catch(err) {
       await ctx.reply(`❌ Error saving race:\n${err.message}`);
     }
@@ -108,17 +116,15 @@ const NewRaceWizard = new Scenes.WizardScene(
   }
 );
 
-// setup scenes & bot
 const stage = new Scenes.Stage([NewRaceWizard]);
 bot.use(session());
 bot.use(stage.middleware());
 bot.command('newrace', ctx => ctx.scene.enter('newrace-wizard'));
-bot.launch().then(() => console.log('🤖 Bot launched'));
 
 // --- Express Web Interface ---
 const app = express();
 
-// Home page
+// Home
 app.get('/', (req, res) => {
   res.send(`
     <html>
@@ -138,9 +144,18 @@ app.get('/leaderboard', async (req, res) => {
   try {
     const data = await fetchJson({ action: 'leaderboard' });
     const rows = data.slice(1).sort((a,b)=>Number(a[1])-Number(b[1]));
-    let html = `<html><head><title>Leaderboard</title></head><body><h1>Leaderboard</h1><table border="1"><tr><th>Player</th><th>Points</th><th>Races</th><th>Avg</th></tr>`;
+    let html = `
+      <html><head><title>Leaderboard</title></head>
+      <body><h1>Leaderboard</h1>
+      <table border="1">
+        <tr><th>Player</th><th>Points</th><th>Races</th><th>Avg</th></tr>`;
     rows.forEach(r => {
-      html += `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td></tr>`;
+      html += `<tr>
+        <td>${r[0]}</td>
+        <td>${r[1]}</td>
+        <td>${r[2]}</td>
+        <td>${r[3]}</td>
+      </tr>`;
     });
     html += `</table><p><a href="/">Home</a></p></body></html>`;
     res.send(html);
@@ -149,5 +164,11 @@ app.get('/leaderboard', async (req, res) => {
   }
 });
 
-// Start Express server
-app.listen(PORT, () => console.log(`🌐 Web server listening on port ${PORT}`));
+// Start only the role you need
+const ROLE = process.env.PROCESS_ROLE;
+if (ROLE === 'worker') {
+  bot.launch().then(() => console.log('🤖 Bot launched (worker)'));
+}
+if (ROLE === 'web') {
+  app.listen(PORT, () => console.log(`🌐 Web server listening on port ${PORT}`));
+}
