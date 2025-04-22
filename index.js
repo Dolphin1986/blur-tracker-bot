@@ -15,10 +15,7 @@ if (!BOT_TOKEN || !WEBAPP_URL || !WEBAPP_SECRET) {
 
 const bot = new Telegraf(BOT_TOKEN);
 
-/**
- * Helper — делает GET-запрос к вашему Apps Script Web App
- * и возвращает распарсенный JSON.
- */
+// helper: GET to Apps Script WebApp
 async function fetchJson(params) {
   const url = new URL(WEBAPP_URL);
   url.searchParams.append('secret', WEBAPP_SECRET);
@@ -28,54 +25,44 @@ async function fetchJson(params) {
   return res.json();
 }
 
-async function getPlayers() {
-  return fetchJson({ action: 'players' });
-}
-
-async function getTracks() {
-  return fetchJson({ action: 'tracks' });
-}
+// fetch players and tracks
+async function getPlayers() { return fetchJson({ action: 'players' }); }
+async function getTracks()  { return fetchJson({ action: 'tracks'  }); }
 
 // /leaderboard
 bot.command('leaderboard', async ctx => {
   try {
     const data = await fetchJson({ action: 'leaderboard' });
-    const rows = data.slice(1).sort((a, b) => Number(a[1]) - Number(b[1]));
+    const rows = data.slice(1).sort((a,b)=>Number(a[1])-Number(b[1]));
     let msg = '🏆 *Leaderboard* 🏆\n\n';
-    rows.forEach(r => {
+    rows.forEach(r=>{
       msg += `• ${r[0]} — ${r[1]} pts (races: ${r[2]}, avg pos: ${r[3]})\n`;
     });
     await ctx.replyWithMarkdown(msg);
-  } catch (err) {
+  } catch(err) {
     await ctx.reply(`Error fetching leaderboard:\n${err.message}`);
   }
 });
 
-//
-// WizardScene для /newrace
-//
+// WizardScene for /newrace without asking date
 const NewRaceWizard = new Scenes.WizardScene(
   'newrace-wizard',
 
-  // Step 1: запрашиваем дату
+  // Step 1: load players/tracks, set date, ask track
   async ctx => {
     ctx.session.newRace = {};
+    // today as YYYY-MM-DD
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    ctx.session.newRace.date = new Date().toLocaleDateString('sv', { timeZone: tz });
     try {
       ctx.session.players = await getPlayers();
       ctx.session.tracks  = await getTracks();
-    } catch (err) {
+    } catch(err) {
       return ctx.reply(`Error fetching setup data:\n${err.message}`);
     }
-    await ctx.reply('🗓 Enter race date (YYYY-MM-DD):');
-    return ctx.wizard.next();
-  },
-
-  // Step 2: сохраняем дату и запрашиваем трек
-  async ctx => {
-    ctx.session.newRace.date = ctx.message.text.trim();
-    await ctx.reply('🏁 Choose track:', {
+    await ctx.reply('🏁 Choose track for today:', {
       reply_markup: {
-        keyboard: ctx.session.tracks.map(t => [t]),
+        keyboard: ctx.session.tracks.map(t=>[t]),
         one_time_keyboard: true,
         resize_keyboard: true
       }
@@ -83,16 +70,19 @@ const NewRaceWizard = new Scenes.WizardScene(
     return ctx.wizard.next();
   },
 
-  // Step 3: сохраняем трек и запрашиваем позиции игроков
+  // Step 2: save track, ask first player position
   async ctx => {
     ctx.session.newRace.track = ctx.message.text.trim();
     ctx.session.newRace.positions = [];
     ctx.session.step = 0;
-    await ctx.reply(`Enter position for *${ctx.session.players[0]}*:`, { parse_mode: 'Markdown' });
+    await ctx.reply(
+      `Enter position for *${ctx.session.players[0]}*:`,
+      { parse_mode: 'Markdown' }
+    );
     return ctx.wizard.next();
   },
 
-  // Step 4: собираем все позиции и отправляем POST в Web App
+  // Step 3: collect positions and submit
   async ctx => {
     const pos = Number(ctx.message.text.trim());
     ctx.session.newRace.positions.push(pos);
@@ -105,21 +95,21 @@ const NewRaceWizard = new Scenes.WizardScene(
       );
     }
 
-    // Все позиции собраны — готовим данные для Web App
+    // all positions collected
     const { date, track, positions } = ctx.session.newRace;
     const players = ctx.session.players;
     const payload = { secret: WEBAPP_SECRET, date, track, players, positions };
 
     try {
-      const response = await fetch(WEBAPP_URL, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(payload)
+      const res = await fetch(WEBAPP_URL, {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify(payload)
       });
-      const text = await response.text();
-      if (text !== 'ok') throw new Error(text);
-      await ctx.reply('✅ New race saved!');
-    } catch (err) {
+      const text = await res.text();
+      if (text!=='ok') throw new Error(text);
+      await ctx.reply('✅ New race saved for ' + date + ' on ' + track + '!');
+    } catch(err) {
       await ctx.reply(`❌ Error saving race:\n${err.message}`);
     }
 
@@ -131,8 +121,6 @@ const stage = new Scenes.Stage([NewRaceWizard]);
 bot.use(session());
 bot.use(stage.middleware());
 
-// Команда /newrace запускает WizardScene
 bot.command('newrace', ctx => ctx.scene.enter('newrace-wizard'));
 
-// Запуск бота
-bot.launch().then(() => console.log('🤖 Bot is up and running'));
+bot.launch().then(()=>console.log('🤖 Bot is running'));
