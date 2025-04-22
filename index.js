@@ -40,9 +40,10 @@ async function getPlayers() {
  * Получить список треков из Web App
  */
 async function getTracks() {
-  // Apps Script doGet должен обрабатывать action=tracks и возвращать JSON‑массив названий
+  // теперь doGet с action=tracks вернёт ["Dragon Fire","Midnight Run",…]
   return await fetchJson({ action: 'tracks' });
 }
+
 
 /**
  * /leaderboard — выводит рейтинг по очкам
@@ -83,14 +84,15 @@ const NewRaceWizard = new Scenes.WizardScene(
   },
 
   // Шаг 2: сохраняем дату и запрашиваем трек
-  async ctx => {
-    ctx.session.newRace.date = ctx.message.text.trim();
-    await ctx.reply('🏁 Choose track:', {
-      reply_markup: {
-        keyboard: ctx.session.tracks.map(t => [t]),
-        one_time_keyboard: true
-      }
-    });
+  await ctx.reply('🏁 Choose track:', {
+    reply_markup: {
+      // на каждой строке — одиночный текст кнопки
+      keyboard: ctx.session.tracks.map(t => [ t ]),
+      one_time_keyboard: true,
+      resize_keyboard: true
+    }
+  });
+
     return ctx.wizard.next();
   },
 
