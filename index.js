@@ -1,6 +1,6 @@
 // index.js
 
-// require('dotenv').config();
+require('dotenv').config();
 const { Telegraf, Scenes, session } = require('telegraf');
 const fetch = require('node-fetch');
 
