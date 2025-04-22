@@ -4,9 +4,9 @@ require('dotenv').config();
 const { Telegraf, Scenes, session } = require('telegraf');
 const fetch = require('node-fetch');
 
-const BOT_TOKEN      = process.env.BOT_TOKEN;
-const WEBAPP_URL     = process.env.WEBAPP_URL;
-const WEBAPP_SECRET  = process.env.WEBAPP_SECRET;
+const BOT_TOKEN     = process.env.BOT_TOKEN;
+const WEBAPP_URL    = process.env.WEBAPP_URL;
+const WEBAPP_SECRET = process.env.WEBAPP_SECRET;
 
 if (!BOT_TOKEN || !WEBAPP_URL || !WEBAPP_SECRET) {
   console.error('Error: BOT_TOKEN, WEBAPP_URL or WEBAPP_SECRET is missing');
@@ -17,7 +17,7 @@ const bot = new Telegraf(BOT_TOKEN);
 
 /**
  * Helper — делает GET-запрос к вашему Apps Script Web App
- * с параметрами params и возвращает распарсенный JSON.
+ * и возвращает распарсенный JSON.
  */
 async function fetchJson(params) {
   const url = new URL(WEBAPP_URL);
@@ -28,31 +28,18 @@ async function fetchJson(params) {
   return res.json();
 }
 
-/**
- * Получить список игроков из Web App
- */
 async function getPlayers() {
-  // Apps Script doGet должен обрабатывать action=players и возвращать JSON‑массив имён
-  return await fetchJson({ action: 'players' });
+  return fetchJson({ action: 'players' });
 }
 
-/**
- * Получить список треков из Web App
- */
 async function getTracks() {
-  // теперь doGet с action=tracks вернёт ["Dragon Fire","Midnight Run",…]
-  return await fetchJson({ action: 'tracks' });
+  return fetchJson({ action: 'tracks' });
 }
 
-
-/**
- * /leaderboard — выводит рейтинг по очкам
- */
+// /leaderboard
 bot.command('leaderboard', async ctx => {
   try {
-    // Apps Script doGet возвращает полный лист Players
     const data = await fetchJson({ action: 'leaderboard' });
-    // data[0] — заголовки, data[1…] — строки [Player, TotalPoints, RacesCount, AvgPosition]
     const rows = data.slice(1).sort((a, b) => Number(a[1]) - Number(b[1]));
     let msg = '🏆 *Leaderboard* 🏆\n\n';
     rows.forEach(r => {
@@ -70,7 +57,7 @@ bot.command('leaderboard', async ctx => {
 const NewRaceWizard = new Scenes.WizardScene(
   'newrace-wizard',
 
-  // Шаг 1: запрашиваем дату
+  // Step 1: запрашиваем дату
   async ctx => {
     ctx.session.newRace = {};
     try {
@@ -83,20 +70,20 @@ const NewRaceWizard = new Scenes.WizardScene(
     return ctx.wizard.next();
   },
 
-  // Шаг 2: сохраняем дату и запрашиваем трек
-  await ctx.reply('🏁 Choose track:', {
-    reply_markup: {
-      // на каждой строке — одиночный текст кнопки
-      keyboard: ctx.session.tracks.map(t => [ t ]),
-      one_time_keyboard: true,
-      resize_keyboard: true
-    }
-  });
+  // Step 2: сохраняем дату и запрашиваем трек
+  async ctx => {
+    ctx.session.newRace.date = ctx.message.text.trim();
+    await ctx.reply('🏁 Choose track:', {
+      reply_markup: {
+        keyboard: ctx.session.tracks.map(t => [t]),
+        one_time_keyboard: true,
+        resize_keyboard: true
+      }
+    });
+    return ctx.wizard.next();
+  },
 
-  //   return ctx.wizard.next();
-  // },
-
-  // Шаг 3: сохраняем трек и запрашиваем позиции игроков
+  // Step 3: сохраняем трек и запрашиваем позиции игроков
   async ctx => {
     ctx.session.newRace.track = ctx.message.text.trim();
     ctx.session.newRace.positions = [];
@@ -105,7 +92,7 @@ const NewRaceWizard = new Scenes.WizardScene(
     return ctx.wizard.next();
   },
 
-  // Шаг 4: собираем все позиции и отправляем POST в Web App
+  // Step 4: собираем все позиции и отправляем POST в Web App
   async ctx => {
     const pos = Number(ctx.message.text.trim());
     ctx.session.newRace.positions.push(pos);
@@ -121,14 +108,7 @@ const NewRaceWizard = new Scenes.WizardScene(
     // Все позиции собраны — готовим данные для Web App
     const { date, track, positions } = ctx.session.newRace;
     const players = ctx.session.players;
-
-    const payload = {
-      secret:    WEBAPP_SECRET,
-      date,
-      track,
-      players,
-      positions
-    };
+    const payload = { secret: WEBAPP_SECRET, date, track, players, positions };
 
     try {
       const response = await fetch(WEBAPP_URL, {
@@ -151,7 +131,7 @@ const stage = new Scenes.Stage([NewRaceWizard]);
 bot.use(session());
 bot.use(stage.middleware());
 
-// Команда /newrace запускает наш Wizard
+// Команда /newrace запускает WizardScene
 bot.command('newrace', ctx => ctx.scene.enter('newrace-wizard'));
 
 // Запуск бота
