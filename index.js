@@ -93,8 +93,8 @@ const NewRaceWizard = new Scenes.WizardScene(
     }
   });
 
-    return ctx.wizard.next();
-  },
+  //   return ctx.wizard.next();
+  // },
 
   // Шаг 3: сохраняем трек и запрашиваем позиции игроков
   async ctx => {
