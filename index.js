@@ -1,21 +1,23 @@
-// index.js
-
 require('dotenv').config();
 const { Telegraf, Scenes, session } = require('telegraf');
 const fetch = require('node-fetch');
+const express = require('express');
 
+// env vars
 const BOT_TOKEN     = process.env.BOT_TOKEN;
 const WEBAPP_URL    = process.env.WEBAPP_URL;
 const WEBAPP_SECRET = process.env.WEBAPP_SECRET;
+const PORT          = process.env.PORT || 3000;
 
+// validate
 if (!BOT_TOKEN || !WEBAPP_URL || !WEBAPP_SECRET) {
   console.error('Error: BOT_TOKEN, WEBAPP_URL or WEBAPP_SECRET is missing');
   process.exit(1);
 }
 
+// --- Telegram Bot setup ---
 const bot = new Telegraf(BOT_TOKEN);
 
-// helper: GET to Apps Script WebApp
 async function fetchJson(params) {
   const url = new URL(WEBAPP_URL);
   url.searchParams.append('secret', WEBAPP_SECRET);
@@ -25,7 +27,6 @@ async function fetchJson(params) {
   return res.json();
 }
 
-// fetch players and tracks
 async function getPlayers() { return fetchJson({ action: 'players' }); }
 async function getTracks()  { return fetchJson({ action: 'tracks'  }); }
 
@@ -35,7 +36,7 @@ bot.command('leaderboard', async ctx => {
     const data = await fetchJson({ action: 'leaderboard' });
     const rows = data.slice(1).sort((a,b)=>Number(a[1])-Number(b[1]));
     let msg = '🏆 *Leaderboard* 🏆\n\n';
-    rows.forEach(r=>{
+    rows.forEach(r => {
       msg += `• ${r[0]} — ${r[1]} pts (races: ${r[2]}, avg pos: ${r[3]})\n`;
     });
     await ctx.replyWithMarkdown(msg);
@@ -44,14 +45,12 @@ bot.command('leaderboard', async ctx => {
   }
 });
 
-// WizardScene for /newrace without asking date
+// Wizard for /newrace (today auto)
 const NewRaceWizard = new Scenes.WizardScene(
   'newrace-wizard',
-
-  // Step 1: load players/tracks, set date, ask track
   async ctx => {
     ctx.session.newRace = {};
-    // today as YYYY-MM-DD
+    // set today's date in YYYY-MM-DD
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
     ctx.session.newRace.date = new Date().toLocaleDateString('sv', { timeZone: tz });
     try {
@@ -62,15 +61,13 @@ const NewRaceWizard = new Scenes.WizardScene(
     }
     await ctx.reply('🏁 Choose track for today:', {
       reply_markup: {
-        keyboard: ctx.session.tracks.map(t=>[t]),
+        keyboard: ctx.session.tracks.map(t => [t]),
         one_time_keyboard: true,
         resize_keyboard: true
       }
     });
     return ctx.wizard.next();
   },
-
-  // Step 2: save track, ask first player position
   async ctx => {
     ctx.session.newRace.track = ctx.message.text.trim();
     ctx.session.newRace.positions = [];
@@ -81,46 +78,76 @@ const NewRaceWizard = new Scenes.WizardScene(
     );
     return ctx.wizard.next();
   },
-
-  // Step 3: collect positions and submit
   async ctx => {
     const pos = Number(ctx.message.text.trim());
     ctx.session.newRace.positions.push(pos);
     ctx.session.step++;
-
     if (ctx.session.step < ctx.session.players.length) {
       return ctx.reply(
         `Enter position for *${ctx.session.players[ctx.session.step]}*:`,
         { parse_mode: 'Markdown' }
       );
     }
-
-    // all positions collected
+    // submit
     const { date, track, positions } = ctx.session.newRace;
     const players = ctx.session.players;
     const payload = { secret: WEBAPP_SECRET, date, track, players, positions };
-
     try {
       const res = await fetch(WEBAPP_URL, {
         method: 'POST',
-        headers: { 'Content-Type':'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      const text = await res.text();
-      if (text!=='ok') throw new Error(text);
+      const txt = await res.text();
+      if (txt !== 'ok') throw new Error(txt);
       await ctx.reply('✅ New race saved for ' + date + ' on ' + track + '!');
     } catch(err) {
       await ctx.reply(`❌ Error saving race:\n${err.message}`);
     }
-
     return ctx.scene.leave();
   }
 );
 
+// setup scenes & bot
 const stage = new Scenes.Stage([NewRaceWizard]);
 bot.use(session());
 bot.use(stage.middleware());
-
 bot.command('newrace', ctx => ctx.scene.enter('newrace-wizard'));
+bot.launch().then(() => console.log('🤖 Bot launched'));
 
-bot.launch().then(()=>console.log('🤖 Bot is running'));
+// --- Express Web Interface ---
+const app = express();
+
+// Home page
+app.get('/', (req, res) => {
+  res.send(`
+    <html>
+      <head><title>Blur Cup Tracker</title></head>
+      <body>
+        <h1>Blur Cup Tracker</h1>
+        <ul>
+          <li><a href="/leaderboard">Leaderboard</a></li>
+        </ul>
+      </body>
+    </html>
+  `);
+});
+
+// Leaderboard page
+app.get('/leaderboard', async (req, res) => {
+  try {
+    const data = await fetchJson({ action: 'leaderboard' });
+    const rows = data.slice(1).sort((a,b)=>Number(a[1])-Number(b[1]));
+    let html = `<html><head><title>Leaderboard</title></head><body><h1>Leaderboard</h1><table border="1"><tr><th>Player</th><th>Points</th><th>Races</th><th>Avg</th></tr>`;
+    rows.forEach(r => {
+      html += `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td></tr>`;
+    });
+    html += `</table><p><a href="/">Home</a></p></body></html>`;
+    res.send(html);
+  } catch(err) {
+    res.status(500).send('Error loading leaderboard: ' + err.message);
+  }
+});
+
+// Start Express server
+app.listen(PORT, () => console.log(`🌐 Web server listening on port ${PORT}`));
